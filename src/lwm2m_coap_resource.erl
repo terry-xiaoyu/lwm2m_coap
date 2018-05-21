@@ -16,7 +16,7 @@
     [coap_uri()].
 
 % GET handler
--callback coap_get(coap_channel_id(), [binary()], [binary()], [binary()]) ->
+-callback coap_get(coap_channel_id(), [binary()], [binary()], coap_content()) ->
     coap_content() | {'error', atom()}.
 % POST handler
 -callback coap_post(coap_channel_id(), [binary()], [binary()], coap_content()) ->
@@ -25,11 +25,11 @@
 -callback coap_put(coap_channel_id(), [binary()], [binary()], coap_content()) ->
     'ok' | {'error', atom()}.
 % DELETE handler
--callback coap_delete(coap_channel_id(), [binary()], [binary()]) ->
+-callback coap_delete(coap_channel_id(), [binary()], coap_content()) ->
     'ok' | {'error', atom()}.
 
 % observe request handler
--callback coap_observe(coap_channel_id(), [binary()], [binary()], boolean()) ->
+-callback coap_observe(coap_channel_id(), [binary()], [binary()], coap_content()) ->
     {'ok', any()} | {'error', atom()}.
 % cancellation request handler
 -callback coap_unobserve(any()) ->

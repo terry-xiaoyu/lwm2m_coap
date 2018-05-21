@@ -143,8 +143,8 @@ process_request(ChId, Request, State) ->
     check_resource(ChId, Request, State).
 
 check_resource(ChId, Request, State=#state{prefix=Prefix, module=Module}) ->
-    case invoke_callback(Module, coap_get,
-            [ChId, Prefix, uri_suffix(Prefix, Request), uri_query(Request)]) of
+    Content = lwm2m_coap_message:get_content(Request),
+    case invoke_callback(Module, coap_get, [ChId, Prefix, uri_query(Request), Content]) of
         R1=#coap_content{} ->
             check_preconditions(ChId, Request, R1, State);
         R2={error, not_found} ->
@@ -203,7 +203,8 @@ handle_method(_ChId, Request, _Resource, State) ->
 handle_observe(ChId, Request=#coap_message{options=Options}, Content=#coap_content{},
         State=#state{prefix=Prefix, module=Module, observer=undefined}) ->
     % the first observe request from this user to this resource
-    case invoke_callback(Module, coap_observe, [ChId, Prefix, uri_suffix(Prefix, Request), requires_ack(Request)]) of
+    Content = lwm2m_coap_message:get_content(Request),
+    case invoke_callback(Module, coap_observe, [ChId, Prefix, requires_ack(Request), Content]) of
         {ok, ObState} ->
             Uri = proplists:get_value(uri_path, Options, []),
             pg2:create({coap_observer, Uri}),
@@ -241,11 +242,7 @@ cancel_observer(#coap_message{options=Options}, State=#state{module=Module, obst
 
 handle_post(ChId, Request, State=#state{prefix=Prefix, module=Module}) ->
     Content = lwm2m_coap_message:get_content(Request),
-    Params =    case erlang:function_exported(Module, coap_post, 5) of
-                    true -> [ChId, Prefix, uri_suffix(Prefix, Request), uri_query(Request), Content];
-                    false -> [ChId, Prefix, uri_suffix(Prefix, Request), Content]  % back compatible
-                end,
-    case invoke_callback(Module, coap_post, Params) of
+    case invoke_callback(Module, coap_post, [ChId, Prefix, uri_query(Request), Content]) of
         {ok, Code, Content2} ->
             return_resource([], Request, {ok, Code}, Content2, State);
         {error, Error} ->
@@ -256,11 +253,7 @@ handle_post(ChId, Request, State=#state{prefix=Prefix, module=Module}) ->
 
 handle_put(ChId, Request, Resource, State=#state{prefix=Prefix, module=Module}) ->
     Content = lwm2m_coap_message:get_content(Request),
-    Params =    case erlang:function_exported(Module, coap_put, 5) of
-                    true -> [ChId, Prefix, uri_suffix(Prefix, Request), uri_query(Request), Content];
-                    false -> [ChId, Prefix, uri_suffix(Prefix, Request), Content]  % back compatible
-                end,
-    case invoke_callback(Module, coap_put, Params) of
+    case invoke_callback(Module, coap_put, [ChId, Prefix, uri_query(Request), Content]) of
         ok ->
             return_response(Request, created_or_changed(Resource), State);
         {error, Error} ->
@@ -275,7 +268,8 @@ created_or_changed({error, not_found}) ->
     {ok, created}.
 
 handle_delete(ChId, Request, State=#state{prefix=Prefix, module=Module}) ->
-    case invoke_callback(Module, coap_delete, [ChId, Prefix, uri_suffix(Prefix, Request)]) of
+    Content = lwm2m_coap_message:get_content(Request),
+    case invoke_callback(Module, coap_delete, [ChId, Prefix, Content]) of
         ok ->
             return_response(Request, {ok, deleted}, State);
         {error, Error} ->
@@ -344,11 +338,6 @@ send_response(Ref, Response=#coap_message{options=Options},
 
 send_request(Channel, Ref, Request) ->
     lwm2m_coap_channel:send_request(Channel, Ref, Request).
-
-
-uri_suffix(Prefix, #coap_message{options=Options}) ->
-    Uri = proplists:get_value(uri_path, Options, []),
-    lists:nthtail(length(Prefix), Uri).
 
 uri_query(#coap_message{options=Options}) ->
     proplists:get_value(uri_query, Options, []).
