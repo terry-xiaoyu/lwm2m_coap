@@ -163,12 +163,14 @@ out_con({out, Message}, State=#state{sock=Sock, cid=ChId}) ->
 % peer ack
 await_pack({in, BinAck}, State) ->
     case catch lwm2m_coap_message_parser:decode(BinAck) of
-        #coap_message{type=ack, method=undefined} = Ack ->
-            handle_ack(Ack, State);
-        #coap_message{type=reset} = Ack ->
-            handle_error(Ack, reset, State);
-        #coap_message{} = Ack ->
-            handle_response(Ack, State);
+        #coap_message{type=ack, method=undefined} = EmptyAck ->
+            handle_ack(EmptyAck, State);
+        #coap_message{type=ack} = PiggyBackedAck ->
+            handle_response(PiggyBackedAck, State);
+        #coap_message{type=reset} = Reset ->
+            handle_error(Reset, reset, State);
+        #coap_message{id=MsgId} ->
+            go_pack_sent(#coap_message{type=reset, id=MsgId}, State);
         {error, _Error} ->
             % shall we inform the receiver?
             ok
