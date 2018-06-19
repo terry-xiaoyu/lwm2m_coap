@@ -74,7 +74,7 @@ handle_cast(Request, State) ->
 
 transport_new_request(Message, Receiver, State=#state{tokens=Tokens}) ->
     Token = crypto:strong_rand_bytes(4), % shall be at least 32 random bits
-    Tokens2 = dict:store(Token, Receiver, Tokens),
+    Tokens2 = dict:store(Token, {0, Receiver}, Tokens),
     transport_new_message(Message#coap_message{token=Token}, Receiver, State#state{tokens=Tokens2}).
 
 transport_new_message(Message, Receiver, State=#state{nextmid=MsgId}) ->
@@ -112,7 +112,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
             update_state(State, TrId, lwm2m_coap_transport:received(BinMessage, TrState));
         error ->
             case dict:find(Token, Tokens) of
-                {ok, Receiver} ->
+                {ok, {1, Receiver}} ->
                     update_state(State, TrId,
                         lwm2m_coap_transport:received(BinMessage, init_transport(TrId, Receiver, State)));
                 error ->
@@ -125,10 +125,14 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
             end
     end;
 % incoming ACK(2) or RST(3) to a request or response
-handle_info({datagram, BinMessage= <<?VERSION:2, _:2, _TKL:4, _Code:8, MsgId:16, _/bytes>>},
-        State=#state{trans=Trans}) ->
+handle_info({datagram, BinMessage= <<?VERSION:2, _:2, TKL:4, _Code:8, MsgId:16, Token:TKL/bytes, _/bytes>>},
+        State=#state{trans=Trans, tokens = Tokens}) ->
     TrId = {out, MsgId},
-    update_state(State, TrId,
+    Tokens2 = case dict:find(Token, Tokens) of
+        {ok, {_, Receiver}} -> dict:store(Token, {1, Receiver}, Tokens);
+        error -> Tokens
+    end,
+    update_state(State#state{tokens = Tokens2}, TrId,
         case dict:find(TrId, Trans) of
             error -> undefined; % ignore unexpected responses
             {ok, TrState} -> lwm2m_coap_transport:received(BinMessage, TrState)
