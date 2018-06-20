@@ -110,6 +110,9 @@ in_con({in, BinMessage}, State) ->
         #coap_message{method=Method} = Message when is_atom(Method) ->
             handle_request(Message, State),
             go_await_aack(Message, State);
+        #coap_message{method=Method, type = con} = Message ->
+            handle_response(Message, State),
+            go_con_await_aack(Message, State);
         #coap_message{} = Message ->
             handle_response(Message, State),
             go_await_aack(Message, State);
@@ -118,6 +121,9 @@ in_con({in, BinMessage}, State) ->
                                        id=lwm2m_coap_message_parser:message_id(BinMessage),
                                        payload=list_to_binary(Error)}, State)
     end.
+go_con_await_aack(Message, State)->
+    BinAck = lwm2m_coap_message_parser:encode(lwm2m_coap_message:ack(Message)),
+    next_state(await_aack, State#state{msg=BinAck}, ?PROCESSING_DELAY).
 
 go_await_aack(Message, State) ->
     % we may need to ack the message

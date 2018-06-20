@@ -115,7 +115,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
                 {ok, {1, Receiver}} ->
                     update_state(State, TrId,
                         lwm2m_coap_transport:received(BinMessage, init_transport(TrId, Receiver, State)));
-                error ->
+                _ ->
                     % token was not recognized
                     BinReset = lwm2m_coap_message_parser:encode(#coap_message{type=reset, id=MsgId}),
                     io:fwrite("<- reset~n"),
@@ -130,7 +130,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, _:2, TKL:4, _Code:8, MsgId:16, 
     TrId = {out, MsgId},
     Tokens2 = case dict:find(Token, Tokens) of
         {ok, {_, Receiver}} -> dict:store(Token, {1, Receiver}, Tokens);
-        error -> Tokens
+        _ -> Tokens
     end,
     update_state(State#state{tokens = Tokens2}, TrId,
         case dict:find(TrId, Trans) of
