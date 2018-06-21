@@ -13,17 +13,22 @@
 -module(lwm2m_coap_udp_socket).
 -behaviour(gen_server).
 
--export([start_link/0, start_link/2, get_channel/2, close/1]).
+-export([start_link/0, start_link/3, get_channel/2, close/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3, terminate/2]).
 
--record(state, {sock, chans, pool}).
+-record(state, {sock, chans, pool, proxy_protocol}).
 
+-record(proxy_header, {inet     :: 4 | 6,
+                       src_addr :: inet:ip_address(),
+                       dst_addr :: inet:ip_address(),
+                       src_port :: inet:port_number(),
+                       dst_port :: inet:port_number()}).
 % client
 start_link() ->
     gen_server:start_link(?MODULE, [0], []).
 % server
-start_link(InPort, SupPid) ->
-    gen_server:start_link(?MODULE, [InPort, SupPid], []).
+start_link(InPort, SupPid, Options) ->
+    gen_server:start_link(?MODULE, [InPort, SupPid, Options], []).
 
 get_channel(Pid, {PeerIP, PeerPortNo}) ->
     gen_server:call(Pid, {get_channel, {PeerIP, PeerPortNo}}).
@@ -35,14 +40,20 @@ close(Pid) ->
 
 
 init([InPort]) ->
+    init([InPort, [] ]);
+
+init([InPort, Options]) ->
     {ok, Socket} = gen_udp:open(InPort, [binary, {active, true}, {reuseaddr, true}]),
     %{ok, InPort2} = inet:port(Socket),
     %error_logger:info_msg("coap listen on *:~p~n", [InPort2]),
-    {ok, #state{sock=Socket, chans=dict:new()}};
+    {ok, #state{sock=Socket,
+                chans=dict:new(),
+                proxy_protocol = proplists:get_value(proxy_protocol, Options)
+                }};
 
-init([InPort, SupPid]) ->
+init([InPort, SupPid, Options]) ->
     gen_server:cast(self(), {set_pool, SupPid}),
-    init([InPort]).
+    init([InPort, Options]).
 
 handle_call({get_channel, ChId}, _From, State=#state{chans=Chans, pool=undefined}) ->
     case find_channel(ChId, Chans) of
@@ -72,8 +83,92 @@ handle_cast(Request, State) ->
     io:fwrite("lwm2m_coap_udp_socket unknown cast ~p~n", [Request]),
     {noreply, State}.
 
-handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid}) ->
+handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = undefined}) ->
     ChId = {PeerIP, PeerPortNo},
+    %io:format("Got normal udp data, Peer: ~p, data: ~p~n", [ChId, Data]),
+    goto_channel(ChId, Chans, Data, PoolPid, State);
+
+handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = v1}) ->
+    %io:format("Got proxy protocol udp data, Peer: ~p, data: ~p~n", [{PeerIP, PeerPortNo}, Data]),
+    case parse_v1(Data) of
+        {error, invalid_header} ->
+            {noreply, State}; % drop
+        {ok, {_ProxyHeader = #proxy_header{src_addr= SrcAddr, src_port = SrcPort}, Body}} ->
+            %io:format("Proxy Protocol Header: ~p~n", [_ProxyHeader]),
+            ChId = {SrcAddr, SrcPort},
+            cache_proxy_addr(ChId, {PeerIP, PeerPortNo}),
+            goto_channel(ChId, Chans, Body, PoolPid, State)
+    end;
+
+handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = undefined}) ->
+    {PeerIP, PeerPortNo} = ChId,
+    ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
+    {noreply, State};
+handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = v1}) ->
+    {PeerIP, PeerPortNo} = get_proxy_addr(ChId),
+    ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
+    {noreply, State};
+
+handle_info({terminated, _SupPid, ChId}, State=#state{chans=Chans}) ->
+    Chans2 = dict:erase(ChId, Chans),
+    delete_proxy_addr(ChId),
+    lwm2m_coap_channel_sup_sup:delete_channel(ChId),
+    {noreply, State#state{chans=Chans2}};
+handle_info(Info, State) ->
+    io:fwrite("lwm2m_coap_udp_socket unexpected ~p~n", [Info]),
+    {noreply, State}.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+terminate(_Reason, #state{sock=Sock}) ->
+    gen_udp:close(Sock),
+    ok.
+
+parse_v1(<<"PROXY TCP", Proto, 16#20, Data/binary>>) ->
+    case binary:split(Data, [<<"\r\n">>], [trim]) of
+        [ProxyInfo, Body] ->
+            case binary:split(ProxyInfo, [<<" ">>], [global, trim]) of
+                [SrcAddrBin, DstAddrBin, SrcPortBin, DstPortBin] ->
+                    PPHeader = parse_v1_header(Proto, SrcAddrBin, DstAddrBin, SrcPortBin, DstPortBin),
+                    {ok, {PPHeader, Body}};
+                _ ->
+                    %io:format("parse_v1 - invalid ProxyHeader: ~p~n", [ProxyInfo]),
+                    {error, invalid_header}
+            end;
+        _Data ->
+            %io:format("parse_v1 - invalid Data: ~p~n", [_Data]),
+            {error, invalid_header}
+    end;
+parse_v1(_) ->
+    {error, invalid_header}.
+
+parse_v1_header(Proto, SrcAddrBin, DstAddrBin, SrcPortBin, DstPortBin) ->
+    {ok, SrcAddr} = inet:parse_address(binary_to_list(SrcAddrBin)),
+    {ok, DstAddr} = inet:parse_address(binary_to_list(DstAddrBin)),
+    SrcPort = list_to_integer(binary_to_list(SrcPortBin)),
+    DstPort = list_to_integer(binary_to_list(DstPortBin)),
+    #proxy_header{
+        inet = Proto,
+        src_addr = SrcAddr,
+        dst_addr = DstAddr,
+        src_port = SrcPort,
+        dst_port = DstPort
+    }.
+
+find_channel(ChId, Chans) ->
+    case dict:find(ChId, Chans) of
+        % there is a channel in our cache, but it might have crashed
+        {ok, Pid} ->
+            case erlang:is_process_alive(Pid) of
+                true -> {ok, Pid};
+                false -> undefined
+            end;
+        % we got data via a new channel
+        error -> undefined
+    end.
+
+goto_channel(ChId, Chans, Data, PoolPid, State) ->
     case find_channel(ChId, Chans) of
         % channel found in cache
         {ok, Pid} ->
@@ -93,39 +188,24 @@ handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, 
             % ignore unexpected message received by a client
             % TODO: do we want to send reset?
             {noreply, State}
-    end;
-handle_info({datagram, {PeerIP, PeerPortNo}, Data}, State=#state{sock=Socket}) ->
-    ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
-    {noreply, State};
-handle_info({terminated, _SupPid, ChId}, State=#state{chans=Chans}) ->
-    Chans2 = dict:erase(ChId, Chans),
-    lwm2m_coap_channel_sup_sup:delete_channel(ChId),
-    {noreply, State#state{chans=Chans2}};
-handle_info(Info, State) ->
-    io:fwrite("lwm2m_coap_udp_socket unexpected ~p~n", [Info]),
-    {noreply, State}.
-
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-terminate(_Reason, #state{sock=Sock}) ->
-    gen_udp:close(Sock),
-    ok.
-
-
-find_channel(ChId, Chans) ->
-    case dict:find(ChId, Chans) of
-        % there is a channel in our cache, but it might have crashed
-        {ok, Pid} ->
-            case erlang:is_process_alive(Pid) of
-                true -> {ok, Pid};
-                false -> undefined
-            end;
-        % we got data via a new channel
-        error -> undefined
     end.
 
 store_channel(ChId, Pid, State=#state{chans=Chans}) ->
     State#state{chans=dict:store(ChId, Pid, Chans)}.
 
+cache_proxy_addr(ChId, Proxy) ->
+    %io:format("Cache Proxy Addr: (~p) for ChId: (~p)~n", [Proxy, ChId]),
+    put(ChId, Proxy).
+
+get_proxy_addr(ChId) ->
+    case get(ChId) of
+        undefined -> not_found;
+        Proxy -> Proxy
+    end.
+
+delete_proxy_addr(ChId) ->
+    case erase(ChId) of
+        undefined -> not_found;
+        Proxy -> Proxy
+    end.
 % end of file

@@ -16,7 +16,7 @@
 
 -behaviour(supervisor).
 -export([init/1]).
--export([start_udp/1, start_udp/2, stop_udp/1, start_dtls/2, start_dtls/3, stop_dtls/1, channel_sup/1]).
+-export([start_udp/1, start_udp/2, start_udp/3, stop_udp/1, start_dtls/2, start_dtls/3, stop_dtls/1, channel_sup/1]).
 
 -include("coap.hrl").
 
@@ -44,9 +44,12 @@ start_udp(Name) ->
     start_udp(Name, ?DEFAULT_COAP_PORT).
 
 start_udp(Name, UdpPort) ->
+    start_udp(Name, UdpPort, []).
+
+start_udp(Name, UdpPort, Options) ->
     supervisor:start_child(?MODULE,
         {Name,
-            {lwm2m_coap_udp_socket, start_link, [UdpPort, whereis(?MODULE)]},
+            {lwm2m_coap_udp_socket, start_link, [UdpPort, whereis(?MODULE), Options]},
             transient, 5000, worker, []}).
 
 stop_udp(Name) ->
@@ -62,7 +65,7 @@ start_dtls(Name, DtlsPort, DtlsOpts) ->
         {Name,
             {lwm2m_coap_dtls_listen_sup, start_link, [DtlsPort, DtlsOpts]},
             transient, infinity, supervisor, [Name]}).
-    
+
 
 stop_dtls(Name) ->
     supervisor:terminate_child(?MODULE, Name),
