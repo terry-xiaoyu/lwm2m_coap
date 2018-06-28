@@ -110,7 +110,7 @@ in_con({in, BinMessage}, State) ->
         #coap_message{method=Method} = Message when is_atom(Method) ->
             handle_request(Message, State),
             go_await_aack(Message, State);
-        #coap_message{method=Method, type = con} = Message ->
+        #coap_message{type = con} = Message ->
             handle_response(Message, State),
             go_con_await_aack(Message, State);
         #coap_message{} = Message ->
@@ -121,9 +121,10 @@ in_con({in, BinMessage}, State) ->
                                        id=lwm2m_coap_message_parser:message_id(BinMessage),
                                        payload=list_to_binary(Error)}, State)
     end.
-go_con_await_aack(Message, State)->
+go_con_await_aack(Message, State=#state{sock=Sock, cid=ChId})->
     BinAck = lwm2m_coap_message_parser:encode(lwm2m_coap_message:ack(Message)),
-    next_state(await_aack, State#state{msg=BinAck}, ?PROCESSING_DELAY).
+    Sock ! {datagram, ChId, BinAck},
+    next_state(sent_non, State).
 
 go_await_aack(Message, State) ->
     % we may need to ack the message
@@ -191,6 +192,9 @@ await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, msg=Message}) 
     handle_error(Message, timeout, State),
     next_state(aack_sent, State).
 
+aack_sent({timeout, await_pack}, State) ->
+    % ignore aack_sent await_pack
+    next_state(aack_sent, State);
 aack_sent({in, _Ack}, State) ->
     % ignore ack retransmission
     next_state(aack_sent, State).
@@ -221,9 +225,10 @@ handle_response(Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref
     Sender ! {coap_response, ChId, Channel, Ref, Message},
     request_complete(Channel, Message).
 
-handle_error(Message, Error, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) ->
+handle_error(Message, Error, #state{channel=Channel}) ->
     %io:fwrite("~p -> ~p~n", [self(), Message]),
-    Sender ! {coap_error, ChId, Channel, Ref, Error},
+    % Sender ! {coap_error, ChId, Channel, Ref, Error},
+    io:format("handle_error:~p~n", [Error]),
     request_complete(Channel, Message).
 
 handle_ack(_Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) ->
