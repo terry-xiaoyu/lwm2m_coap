@@ -192,7 +192,7 @@ await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, msg=Message}) 
     handle_error(Message, timeout, State),
     next_state(aack_sent, State).
 
-aack_sent({timeout, await_pack}, State) ->
+aack_sent({timeout, await_aack}, State) ->
     % ignore aack_sent await_pack
     next_state(aack_sent, State);
 aack_sent({in, _Ack}, State) ->
