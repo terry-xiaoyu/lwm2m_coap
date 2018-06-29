@@ -152,6 +152,10 @@ go_pack_sent(Ack, State=#state{sock=Sock, cid=ChId}) ->
     Sock ! {datagram, ChId, BinAck},
     next_state(pack_sent, State#state{msg=BinAck}).
 
+pack_sent({timeout, await_aack}, State) ->
+    % ignore aack_sent await_pack
+    next_state(pack_sent, State);
+
 pack_sent({in, _BinMessage}, State=#state{sock=Sock, cid=ChId, msg=BinAck}) ->
     % retransmit the ack
     Sock ! {datagram, ChId, BinAck},
