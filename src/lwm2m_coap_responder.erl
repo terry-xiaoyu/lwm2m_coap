@@ -44,11 +44,11 @@ init([Channel, Uri]) ->
     end.
 
 handle_call(_Msg, _From, State) ->
-    {reply, unknown_command, State}.
+    {reply, unknown_command, State, hibernate}.
 
 handle_cast(_Resource, State=#state{observer=undefined}) ->
     % ignore unexpected notification
-    {noreply, State};
+    {noreply, State, hibernate};
 handle_cast(Resource=#coap_content{}, State=#state{observer=Observer}) ->
     return_resource(Observer, Resource, State);
 handle_cast({error, Code}, State=#state{observer=Observer}) ->
@@ -62,13 +62,13 @@ handle_info(cache_expired, State=#state{observer=undefined}) ->
     {stop, normal, State};
 handle_info(cache_expired, State) ->
     % multi-block cache expired, but the observer is still active
-    {noreply, State};
+    {noreply, State, hibernate};
 
 handle_info({coap_ack, _ChId, _Channel, Ref},
         State=#state{module=Module, obstate=ObState}) ->
     case invoke_callback(Module, coap_ack, [Ref, ObState]) of
         {ok, ObState2} ->
-            {noreply, State#state{obstate=ObState2}}
+            {noreply, State#state{obstate=ObState2}, hibernate}
     end;
 handle_info({coap_error, _ChId, _Channel, _Ref, _Error}, State=#state{observer=undefined}) ->
     %{noreply, State};
@@ -84,9 +84,9 @@ handle_info(Info, State=#state{module=Module, observer=Observer, obstate=ObState
             return_response(Ref, Observer, {error, Code}, <<>>, State#state{obstate=ObState2});
         {send_request, Request, Ref3} ->
             send_request(Channel, Ref3, Request),
-            {noreply, State};
+            {noreply, State, hibernate};
         {noreply, ObState2} ->
-            {noreply, State#state{obstate=ObState2}};
+            {noreply, State#state{obstate=ObState2}, hibernate};
         {stop, ObState2} ->
             {ok, State2} = cancel_observer(Observer, State#state{obstate=ObState2}),
             return_response(Observer, {error, service_unavailable}, State2)
@@ -325,7 +325,7 @@ send_response(Ref, Response=#coap_message{options=Options},
     case Observer of
         #coap_message{} ->
             % notifications will follow
-            {noreply, State};
+            {noreply, State, hibernate};
         undefined ->
             case proplists:get_value(block2, Options) of
                 {_, true, _} ->
@@ -333,7 +333,7 @@ send_response(Ref, Response=#coap_message{options=Options},
                     set_timeout(?EXCHANGE_LIFETIME, State);
                 _Else ->
                     % no further communication concerning this request
-                    {noreply, State}
+                    {noreply, State, hibernate}
             end
     end.
 
@@ -357,6 +357,6 @@ set_timeout(Timeout, State=#state{timer=Timer}) ->
 
 set_timeout0(State, Timeout) ->
     Timer = erlang:send_after(Timeout, self(), cache_expired),
-    {noreply, State#state{timer=Timer}}.
+    {noreply, State#state{timer=Timer}, hibernate}.
 
 % end of file
