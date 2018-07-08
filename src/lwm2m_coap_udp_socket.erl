@@ -109,7 +109,7 @@ handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = v
     ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
     {noreply, State};
 
-handle_info({terminated, _SupPid, ChId}, State=#state{chans=Chans}) ->
+handle_info({terminated, ChId}, State=#state{chans=Chans}) ->
     Chans2 = dict:erase(ChId, Chans),
     delete_proxy_addr(ChId),
     lwm2m_coap_channel_sup_sup:delete_channel(ChId),
@@ -175,9 +175,9 @@ goto_channel(ChId, Chans, Data, PoolPid, State) ->
             Pid ! {datagram, Data},
             {noreply, State};
         undefined when is_pid(PoolPid) ->
-            case lwm2m_coap_channel_sup_sup:start_channel(PoolPid, ChId) of
+            case lwm2m_coap_channel:start_link(undefined, self(), ChId, undefined) of
                 % new channel created
-                {ok, _, Pid} ->
+                {ok, Pid} ->
                     Pid ! {datagram, Data},
                     {noreply, store_channel(ChId, Pid, State)};
                 % drop this packet

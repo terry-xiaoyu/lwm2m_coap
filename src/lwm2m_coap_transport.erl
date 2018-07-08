@@ -208,17 +208,10 @@ aack_sent({in, _Ack}, State) ->
 timeout_after(Time, Channel, TrId, Event) ->
     erlang:send_after(Time, Channel, {timeout, TrId, Event}).
 
-handle_request(Message, #state{cid=ChId, channel=Channel, resp=ReSup, receiver=undefined}) ->
+handle_request(Message, #state{cid=ChId, channel=Channel, resp=Pid, receiver=undefined}) ->
     %io:fwrite("~p => ~p~n", [self(), Message]),
-    case lwm2m_coap_responder_sup:get_responder(ReSup, ChId, Message) of
-        {ok, Pid} ->
-            Pid ! {coap_request, ChId, Channel, undefined, Message},
-            ok;
-        {error, {not_found, _}} ->
-            {ok, _} = lwm2m_coap_channel:send(Channel,
-                lwm2m_coap_message:response({error, not_found}, Message)),
-            ok
-    end;
+    Pid ! {coap_request, ChId, Channel, undefined, Message},
+    ok;
 handle_request(Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) ->
     %io:fwrite("~p => ~p~n", [self(), Message]),
     Sender ! {coap_request, ChId, Channel, Ref, Message},

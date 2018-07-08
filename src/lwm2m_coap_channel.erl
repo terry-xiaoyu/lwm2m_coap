@@ -12,19 +12,19 @@
 -module(lwm2m_coap_channel).
 -behaviour(gen_server).
 
--export([start_link/4]).
+-export([start_link/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3, terminate/2]).
 -export([ping/1, send/2, send_request/3, send_message/3, send_response/3, close/1]).
 
 -define(VERSION, 1).
 -define(MAX_MESSAGE_ID, 65535). % 16-bit number
 
--record(state, {sup, sock, cid, tokens, trans, nextmid, res, rescnt}).
+-record(state, {sock, cid, tokens, trans, nextmid, res = undefined, rescnt}).
 
 -include("coap.hrl").
 
-start_link(SupPid, SockPid, ChId, ReSup) ->
-    gen_server:start_link(?MODULE, [SupPid, SockPid, ChId, ReSup], []).
+start_link(SockPid, ChId) ->
+    gen_server:start_link(?MODULE, [SockPid, ChId], []).
 
 ping(Channel) ->
     send_message(Channel, make_ref(), #coap_message{type=con}).
@@ -48,11 +48,11 @@ send_response(Channel, Ref, Message) ->
 close(Pid) ->
     gen_server:cast(Pid, shutdown).
 
-init([SupPid, SockPid, ChId, ReSup]) ->
+init([SockPid, ChId]) ->
     % we want to get called upon termination
     process_flag(trap_exit, true),
-    {ok, #state{sup=SupPid, sock=SockPid, cid=ChId, tokens=dict:new(),
-        trans=dict:new(), nextmid=first_mid(), res=ReSup, rescnt=0}}.
+    {ok, #state{sock=SockPid, cid=ChId, tokens=dict:new(),
+        trans=dict:new(), nextmid=first_mid(), rescnt=0}}.
 
 handle_call(_Unknown, _From, State) ->
     {reply, unknown_call, State}.
@@ -99,6 +99,18 @@ transport_response(Message=#coap_message{id=MsgId}, Receiver, State=#state{trans
     end.
 
 % incoming CON(0) or NON(1) request
+handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State = #state{res = undefined}) ->
+    case catch lwm2m_coap_message_parser:decode(BinMessage) of
+        #coap_message{options=Options} ->
+            Uri = proplists:get_value(uri_path, Options, []),
+            {ok, Re} = lwm2m_coap_responder:start_link(self(), Uri),
+            TrId = {in, MsgId},
+            State2 = State#state{res = Re},
+            update_state(State2, TrId,
+                lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State2)));
+        {error, _Error} ->
+            {noreply, State}
+    end;
 handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State) ->
     TrId = {in, MsgId},
     update_state(State, TrId,
@@ -160,9 +172,9 @@ handle_info(Info, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(_Reason, #state{sup=SupPid, sock=SockPid, cid=ChId}) ->
+terminate(_Reason, #state{sock=SockPid, cid=ChId}) ->
     %io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
-    SockPid ! {terminated, SupPid, ChId},
+    SockPid ! {terminated, ChId},
     ok.
 
 
