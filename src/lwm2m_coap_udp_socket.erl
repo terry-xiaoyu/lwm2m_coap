@@ -175,7 +175,7 @@ goto_channel(ChId, Chans, Data, PoolPid, State) ->
             Pid ! {datagram, Data},
             {noreply, State};
         undefined when is_pid(PoolPid) ->
-            case lwm2m_coap_channel:start_link(undefined, self(), ChId, undefined) of
+            case lwm2m_coap_channel:start_link(self(), ChId) of
                 % new channel created
                 {ok, Pid} ->
                     Pid ! {datagram, Data},
