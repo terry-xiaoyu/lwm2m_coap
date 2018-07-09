@@ -55,7 +55,7 @@ init([SockPid, ChId]) ->
         trans=dict:new(), nextmid=first_mid(), rescnt=0}}.
 
 handle_call(_Unknown, _From, State) ->
-    {reply, unknown_call, State}.
+    {reply, unknown_call, State, hibernate}.
 
 % outgoing CON(0) or NON(1) request
 handle_cast({send_request, Message, Receiver}, State) ->
@@ -70,7 +70,7 @@ handle_cast(shutdown, State) ->
     {stop, normal, State};
 handle_cast(Request, State) ->
     io:fwrite("coap_channel unknown cast ~p~n", [Request]),
-    {noreply, State}.
+    {noreply, State, hibernate}.
 
 transport_new_request(Message, Receiver, State=#state{tokens=Tokens}) ->
     Token = crypto:strong_rand_bytes(4), % shall be at least 32 random bits
@@ -109,7 +109,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDet
             update_state(State2, TrId,
                 lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State2)));
         {error, _Error} ->
-            {noreply, State}
+            {noreply, State, hibernate}
     end;
 handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State) ->
     TrId = {in, MsgId},
@@ -132,7 +132,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
                     BinReset = lwm2m_coap_message_parser:encode(#coap_message{type=reset, id=MsgId}),
                     io:fwrite("<- reset~n"),
                     Sock ! {datagram, ChId, BinReset},
-                    {noreply, State}
+                    {noreply, State, hibernate}
 
             end
     end;
@@ -151,7 +151,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, _:2, TKL:4, _Code:8, MsgId:16, 
         end);
 % silently ignore other versions
 handle_info({datagram, <<Ver:2, _/bytes>>}, State) when Ver /= ?VERSION ->
-    {noreply, State};
+    {noreply, State, hibernate};
 handle_info({timeout, TrId, Event}, State=#state{trans=Trans}) ->
     update_state(State, TrId,
         case dict:find(TrId, Trans) of
@@ -167,7 +167,7 @@ handle_info({responder_completed}, State=#state{rescnt=Count}) ->
     purge_state(State#state{rescnt=Count-1});
 handle_info(Info, State) ->
     io:fwrite("unexpected massage ~p~n", [Info]),
-    {noreply, State}.
+    {noreply, State, hibernate}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -204,12 +204,12 @@ update_state(State=#state{trans=Trans}, TrId, undefined) ->
     purge_state(State#state{trans=Trans2});
 update_state(State=#state{trans=Trans}, TrId, TrState) ->
     Trans2 = dict:store(TrId, TrState, Trans),
-    {noreply, State#state{trans=Trans2}}.
+    {noreply, State#state{trans=Trans2}, hibernate}.
 
 purge_state(State=#state{tokens=Tokens, trans=Trans, rescnt=Count}) ->
     case dict:size(Tokens)+dict:size(Trans)+Count of
         0 -> {stop, normal, State};
-        _Else -> {noreply, State}
+        _Else -> {noreply, State, hibernate}
     end.
 
 % end of file
