@@ -103,11 +103,15 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDet
     case catch lwm2m_coap_message_parser:decode(BinMessage) of
         #coap_message{options=Options} ->
             Uri = proplists:get_value(uri_path, Options, []),
-            {ok, Re} = lwm2m_coap_responder:start_link(self(), Uri),
-            TrId = {in, MsgId},
-            State2 = State#state{res = Re},
-            update_state(State2, TrId,
-                lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State2)));
+            case lwm2m_coap_responder:start_link(self(), Uri) of
+                {ok, Re} ->
+                    TrId = {in, MsgId},
+                    State2 = State#state{res = Re},
+                    update_state(State2, TrId,
+                        lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State2)));
+                Error ->
+                    {stop, Error, State}
+            end;
         {error, _Error} ->
             {noreply, State, hibernate}
     end;
@@ -172,8 +176,13 @@ handle_info(Info, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(_Reason, #state{sock=SockPid, cid=ChId}) ->
+terminate(normal, #state{sock=SockPid, cid=ChId}) ->
     %io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
+    SockPid ! {terminated, ChId},
+    ok;
+terminate(Reason, #state{sock=SockPid, cid=ChId}) ->
+    %io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
+    io:format("Channel stop:error:~p~n", [Reason]),
     SockPid ! {terminated, ChId},
     ok.
 
