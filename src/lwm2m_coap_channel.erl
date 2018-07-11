@@ -169,6 +169,11 @@ handle_info({responder_started}, State=#state{rescnt=Count}) ->
     purge_state(State#state{rescnt=Count+1});
 handle_info({responder_completed}, State=#state{rescnt=Count}) ->
     purge_state(State#state{rescnt=Count-1});
+
+
+handle_info({'EXIT', _Pid, Reason}, State) ->
+    {stop, Reason, State};
+
 handle_info(Info, State) ->
     io:fwrite("unexpected massage ~p~n", [Info]),
     {noreply, State, hibernate}.
@@ -177,12 +182,11 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 terminate(normal, #state{sock=SockPid, cid=ChId}) ->
-    %io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
+    io:fwrite("channel ~p finished ~p~n", [ChId, normal]),
     SockPid ! {terminated, ChId},
     ok;
 terminate(Reason, #state{sock=SockPid, cid=ChId}) ->
-    %io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
-    io:format("Channel stop:error:~p~n", [Reason]),
+    io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
     SockPid ! {terminated, ChId},
     ok.
 
