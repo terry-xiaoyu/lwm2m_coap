@@ -16,7 +16,7 @@
 -export([start_link/0, start_link/3, get_channel/2, close/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3, terminate/2]).
 
--record(state, {sock, chans, pool, proxy_protocol}).
+-record(state, {sock, chans, pool, proxy_protocol, lb}).
 
 -record(proxy_header, {inet     :: 4 | 6,
                        src_addr :: inet:ip_address(),
@@ -43,12 +43,14 @@ init([InPort]) ->
     init([InPort, [] ]);
 
 init([InPort, Options]) ->
-    {ok, Socket} = gen_udp:open(InPort, [binary, {active, true}, {reuseaddr, true}] ++ Options),
+    Opts = proplists:get_value(opts, Options, []),
+    {ok, Socket} = gen_udp:open(InPort, [binary, {active, true}, {reuseaddr, true}] ++ Opts),
     %{ok, InPort2} = inet:port(Socket),
     %error_logger:info_msg("coap listen on *:~p~n", [InPort2]),
     {ok, #state{sock=Socket,
                 chans=dict:new(),
-                proxy_protocol = proplists:get_value(proxy_protocol, Options)
+                proxy_protocol = proplists:get_value(proxy_protocol, Options),
+                lb = proplists:get_value(lb, Options)
                 }};
 
 init([InPort, SupPid, Options]) ->
@@ -100,16 +102,18 @@ handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, 
             goto_channel(ChId, Chans, Body, PoolPid, State)
     end;
 
-handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = undefined}) ->
-    {PeerIP, PeerPortNo} = ChId,
-    ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
-    {noreply, State};
-handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = v1}) ->
-    {PeerIP, PeerPortNo} = get_proxy_addr(ChId),
+handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = PP}) ->
+    {PeerIP, PeerPortNo} = get_addr(PP, ChId),
     ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
     {noreply, State};
 
-handle_info({terminated, ChId}, State=#state{chans=Chans}) ->
+handle_info({terminated, ChId}, State=#state{sock=Socket, chans=Chans, proxy_protocol = PP, lb = LB}) ->
+    case LB of
+        undefined -> ok;
+        _ ->
+            {PeerIP, PeerPortNo} = get_addr(PP, ChId),
+            ok = gen_udp:send(Socket, PeerIP, PeerPortNo, <<"udp_closed">>)
+    end,
     Chans2 = dict:erase(ChId, Chans),
     delete_proxy_addr(ChId),
     lwm2m_coap_channel_sup_sup:delete_channel(ChId),
@@ -208,4 +212,7 @@ delete_proxy_addr(ChId) ->
         undefined -> not_found;
         Proxy -> Proxy
     end.
+
+get_addr(v1, ChId) -> get_proxy_addr(ChId);
+get_addr(_, {PeerIP, PeerPortNo}) -> {PeerIP, PeerPortNo}.
 % end of file
