@@ -102,6 +102,9 @@ handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, 
             goto_channel(ChId, Chans, Body, PoolPid, State)
     end;
 
+handle_info({datagram, _ChId, undefined}, State) ->
+    {noreply, State};
+
 handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = PP}) ->
     {PeerIP, PeerPortNo} = get_addr(PP, ChId),
     ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
