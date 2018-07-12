@@ -124,7 +124,7 @@ in_con({in, BinMessage}, State) ->
 go_con_await_aack(Message, State=#state{sock=Sock, cid=ChId})->
     BinAck = lwm2m_coap_message_parser:encode(lwm2m_coap_message:ack(Message)),
     Sock ! {datagram, ChId, BinAck},
-    next_state(idle, State).
+    next_state(pack_sent, State).
 
 go_await_aack(Message, State) ->
     % we may need to ack the message
