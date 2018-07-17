@@ -52,7 +52,7 @@ init([SockPid, ChId]) ->
     % we want to get called upon termination
     process_flag(trap_exit, true),
     _ = rand:seed(exs1024),
-    Time = 160000 + rand:uniform(20000),
+    Time = 80000 + rand:uniform(10000),
     erlang:send_after(Time, self(), {ping, ?PING, Time}),
     {ok, #state{sock=SockPid, cid=ChId, tokens=dict:new(),
         trans=dict:new(), nextmid=first_mid(), rescnt=0}}.
