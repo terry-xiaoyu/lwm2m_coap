@@ -110,6 +110,15 @@ handle_info({datagram, ChId, Data}, State=#state{sock=Socket, proxy_protocol = P
     ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data),
     {noreply, State};
 
+handle_info({ping, ChId, Data}, State=#state{sock=Socket, proxy_protocol = PP, lb = LB}) ->
+    case LB of
+        undefined -> ok;
+        _ ->
+            {PeerIP, PeerPortNo} = get_addr(PP, ChId),
+            ok = gen_udp:send(Socket, PeerIP, PeerPortNo, Data)
+    end,
+    {noreply, State};
+
 handle_info({terminated, ChId}, State=#state{sock=Socket, chans=Chans, proxy_protocol = PP, lb = LB}) ->
     case LB of
         undefined -> ok;
@@ -121,6 +130,7 @@ handle_info({terminated, ChId}, State=#state{sock=Socket, chans=Chans, proxy_pro
     delete_proxy_addr(ChId),
     lwm2m_coap_channel_sup_sup:delete_channel(ChId),
     {noreply, State#state{chans=Chans2}};
+
 handle_info(Info, State) ->
     io:fwrite("lwm2m_coap_udp_socket unexpected ~p~n", [Info]),
     {noreply, State}.

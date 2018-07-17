@@ -51,6 +51,9 @@ close(Pid) ->
 init([SockPid, ChId]) ->
     % we want to get called upon termination
     process_flag(trap_exit, true),
+    _ = rand:seed(exs1024),
+    Time = 2000 + rand:uniform(1000),
+    erlang:send_after(Time, self(), {ping, <<0>>, Time}),
     {ok, #state{sock=SockPid, cid=ChId, tokens=dict:new(),
         trans=dict:new(), nextmid=first_mid(), rescnt=0}}.
 
@@ -170,9 +173,13 @@ handle_info({responder_started}, State=#state{rescnt=Count}) ->
 handle_info({responder_completed}, State=#state{rescnt=Count}) ->
     purge_state(State#state{rescnt=Count-1});
 
-
 handle_info({'EXIT', _Pid, Reason}, State) ->
     {stop, Reason, State};
+
+handle_info({ping, Data, Time}, State = #state{sock=SockPid, cid=ChId}) ->
+    erlang:send_after(Time, self(), {ping, <<0>>, Time}),
+    SockPid ! {ping, ChId, Data},
+    {noreply, State, hibernate};
 
 handle_info(Info, State) ->
     io:fwrite("unexpected massage ~p~n", [Info]),
