@@ -23,6 +23,9 @@
                        dst_addr :: inet:ip_address(),
                        src_port :: inet:port_number(),
                        dst_port :: inet:port_number()}).
+
+-include("coap.hrl").
+
 % client
 start_link() ->
     gen_server:start_link(?MODULE, [0], []).
@@ -124,7 +127,7 @@ handle_info({terminated, ChId}, State=#state{sock=Socket, chans=Chans, proxy_pro
         undefined -> ok;
         _ ->
             {PeerIP, PeerPortNo} = get_addr(PP, ChId),
-            ok = gen_udp:send(Socket, PeerIP, PeerPortNo, <<"udp_closed">>)
+            ok = gen_udp:send(Socket, PeerIP, PeerPortNo, ?CLOSED)
     end,
     Chans2 = dict:erase(ChId, Chans),
     delete_proxy_addr(ChId),

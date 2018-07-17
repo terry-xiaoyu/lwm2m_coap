@@ -28,3 +28,6 @@
 
 -type coap_message() :: #coap_message{}.
 -type coap_content() :: #coap_content{}.
+
+-define(CLOSED, <<0>>).
+-define(PING, <<1>>).
