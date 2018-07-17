@@ -177,7 +177,7 @@ handle_info({'EXIT', _Pid, Reason}, State) ->
     {stop, Reason, State};
 
 handle_info({ping, Data, Time}, State = #state{sock=SockPid, cid=ChId}) ->
-    erlang:send_after(Time, self(), {ping, <<0>>, Time}),
+    erlang:send_after(Time, self(), {ping, ?PING, Time}),
     SockPid ! {ping, ChId, Data},
     {noreply, State, hibernate};
 
