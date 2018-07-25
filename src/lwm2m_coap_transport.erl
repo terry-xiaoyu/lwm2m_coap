@@ -219,10 +219,8 @@ handle_response(Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref
     Sender ! {coap_response, ChId, Channel, Ref, Message},
     request_complete(Channel, Message).
 
-handle_error(Message, Error, #state{channel=Channel}) ->
+handle_error(Message, _Error, #state{channel=Channel}) ->
     %io:fwrite("~p -> ~p~n", [self(), Message]),
-    % Sender ! {coap_error, ChId, Channel, Ref, Error},
-    io:format("handle_error:~p~n", [Error]),
     request_complete(Channel, Message).
 
 handle_ack(_Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) ->
