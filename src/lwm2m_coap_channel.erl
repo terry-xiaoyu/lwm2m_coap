@@ -102,7 +102,7 @@ transport_response(Message=#coap_message{id=MsgId}, Receiver, State=#state{trans
     end.
 
 % incoming CON(0) or NON(1) request
-handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State = #state{res = undefined}) ->
+handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State = #state{sock=Sock, cid=ChId, res = undefined}) ->
     case catch lwm2m_coap_message_parser:decode(BinMessage) of
         #coap_message{options=Options} ->
             Uri = proplists:get_value(uri_path, Options, []),
@@ -112,8 +112,10 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDet
                     State2 = State#state{res = Re},
                     update_state(State2, TrId,
                         lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State2)));
-                Error ->
-                    {stop, Error, State}
+                {error, Error} ->
+                    send_reset(Sock, ChId, MsgId,
+                        {coap_responder_start_failed, Error}),
+                    {noreply, State, hibernate}
             end;
         {error, _Error} ->
             {noreply, State, hibernate}
@@ -134,15 +136,13 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
                 {ok, {1, Receiver}} ->
                     update_state(State, TrId,
                         lwm2m_coap_transport:received(BinMessage, init_transport(TrId, Receiver, State)));
-                _ ->
+                Error ->
                     % token was not recognized
-                    BinReset = lwm2m_coap_message_parser:encode(#coap_message{type=reset, id=MsgId}),
-                    io:fwrite("<- reset~n"),
-                    Sock ! {datagram, ChId, BinReset},
+                    send_reset(Sock, ChId, MsgId, {token_not_found, Error}),
                     {noreply, State, hibernate}
-
             end
     end;
+
 % incoming ACK(2) or RST(3) to a request or response
 handle_info({datagram, BinMessage= <<?VERSION:2, _:2, TKL:4, _Code:8, MsgId:16, Token:TKL/bytes, _/bytes>>},
         State=#state{trans=Trans, tokens = Tokens}) ->
@@ -197,6 +197,10 @@ terminate(Reason, #state{sock=SockPid, cid=ChId}) ->
     SockPid ! {terminated, ChId},
     ok.
 
+send_reset(Sock, ChId, MsgId, ErrorMsg) ->
+    error_logger:error_msg("<- reset, error: ~p", [ErrorMsg]),
+    Sock ! {datagram, ChId,
+        lwm2m_coap_message_parser:encode(#coap_message{type=reset, id=MsgId})}.
 
 first_mid() ->
     _ = rand:seed(exs1024),

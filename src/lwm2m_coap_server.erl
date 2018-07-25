@@ -16,25 +16,21 @@
 
 -behaviour(supervisor).
 -export([init/1]).
--export([start_udp/1, start_udp/2, start_udp/3, stop_udp/1, start_dtls/2, start_dtls/3, stop_dtls/1, channel_sup/1]).
+-export([start_udp/1, start_udp/2, start_udp/3, stop_udp/1, start_dtls/2, start_dtls/3, stop_dtls/1, channel_sup/1, start_registry/1]).
 
 -include("coap.hrl").
 
 start() ->
     start(normal, []).
 
-start(normal, []) ->
+start(normal, _Args) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 stop(_Pid) ->
     ok.
 
-
 init([]) ->
-    {ok, {{one_for_all, 3, 10}, [
-        {lwm2m_coap_server_registry,
-            {lwm2m_coap_server_registry, start_link, []},
-            permanent, 5000, worker, []},
+    {ok, {{one_for_one, 3, 10}, [
         {lwm2m_coap_channel_sup_sup,
             {lwm2m_coap_channel_sup_sup, start_link, []},
             permanent, infinity, supervisor, []}
@@ -56,7 +52,6 @@ stop_udp(Name) ->
     supervisor:terminate_child(?MODULE, Name),
     supervisor:delete_child(?MODULE, Name).
 
-
 start_dtls(Name, DtlsOpts) ->
     start_dtls(Name, ?DEFAULT_COAPS_PORT, DtlsOpts).
 
@@ -66,11 +61,15 @@ start_dtls(Name, DtlsPort, DtlsOpts) ->
             {lwm2m_coap_dtls_listen_sup, start_link, [DtlsPort, DtlsOpts]},
             transient, infinity, supervisor, [Name]}).
 
-
 stop_dtls(Name) ->
     supervisor:terminate_child(?MODULE, Name),
     supervisor:delete_child(?MODULE, Name).
 
+start_registry(ResourceHandlers) when is_list(ResourceHandlers) ->
+    supervisor:start_child(?MODULE,
+        {lwm2m_coap_server_registry,
+            {lwm2m_coap_server_registry, start_link, [ResourceHandlers]},
+            permanent, 5000, worker, []}).
 
 channel_sup(SupPid) -> child(SupPid, lwm2m_coap_channel_sup_sup).
 
