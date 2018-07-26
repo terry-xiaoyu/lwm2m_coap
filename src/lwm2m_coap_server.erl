@@ -46,7 +46,7 @@ start_udp(Name, UdpPort, Options) ->
     supervisor:start_child(?MODULE,
         {Name,
             {lwm2m_coap_udp_socket, start_link, [UdpPort, whereis(?MODULE), Options]},
-            transient, 5000, worker, []}).
+            permanent, 5000, worker, []}).
 
 stop_udp(Name) ->
     supervisor:terminate_child(?MODULE, Name),
@@ -59,7 +59,7 @@ start_dtls(Name, DtlsPort, DtlsOpts) ->
     supervisor:start_child(?MODULE,
         {Name,
             {lwm2m_coap_dtls_listen_sup, start_link, [DtlsPort, DtlsOpts]},
-            transient, infinity, supervisor, [Name]}).
+            permanent, infinity, supervisor, [Name]}).
 
 stop_dtls(Name) ->
     supervisor:terminate_child(?MODULE, Name),

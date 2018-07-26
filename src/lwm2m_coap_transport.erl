@@ -215,23 +215,20 @@ handle_request(Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}
     ok.
 
 handle_response(Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) ->
-    %io:fwrite("~p -> ~p~n", [self(), Message]),
     Sender ! {coap_response, ChId, Channel, Ref, Message},
     request_complete(Channel, Message).
 
 handle_error(Message, _Error, #state{channel=Channel}) ->
-    %io:fwrite("~p -> ~p~n", [self(), Message]),
     request_complete(Channel, Message).
 
 handle_ack(_Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) ->
-    %io:fwrite("~p -> ~p~n", [self(), Message]),
     Sender ! {coap_ack, ChId, Channel, Ref},
     ok.
 
-request_complete(Channel, #coap_message{token=Token, options=Options}) ->
+request_complete(Channel, Msg=#coap_message{options=Options}) ->
     case proplists:get_value(observe, Options, []) of
         [] ->
-            Channel ! {request_complete, Token},
+            Channel ! {request_complete, Msg},
             ok;
         _Else ->
             ok

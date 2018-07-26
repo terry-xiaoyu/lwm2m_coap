@@ -46,10 +46,11 @@ init([InPort]) ->
     init([InPort, [] ]);
 
 init([InPort, Options]) ->
+    process_flag(trap_exit, true),
     Opts = proplists:get_value(opts, Options, []),
     {ok, Socket} = gen_udp:open(InPort, [binary, {active, true}, {reuseaddr, true}] ++ Opts),
-    %{ok, InPort2} = inet:port(Socket),
-    %error_logger:info_msg("coap listen on *:~p~n", [InPort2]),
+    {ok, InPort2} = inet:port(Socket),
+    error_logger:info_msg("coap listen on *:~p~n", [InPort2]),
     {ok, #state{sock=Socket,
                 chans=dict:new(),
                 proxy_protocol = proplists:get_value(proxy_protocol, Options),
@@ -85,7 +86,7 @@ handle_cast({set_pool, SupPid}, State) ->
 handle_cast(shutdown, State) ->
     {stop, normal, State};
 handle_cast(Request, State) ->
-    io:fwrite("lwm2m_coap_udp_socket unknown cast ~p~n", [Request]),
+    error_logger:error_msg("lwm2m_coap_udp_socket unknown cast: ~p", [Request]),
     {noreply, State}.
 
 handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = undefined}) ->
@@ -134,14 +135,18 @@ handle_info({terminated, ChId}, State=#state{sock=Socket, chans=Chans, proxy_pro
     lwm2m_coap_channel_sup_sup:delete_channel(ChId),
     {noreply, State#state{chans=Chans2}};
 
+handle_info({'EXIT', _Pid, _Reason}, State) ->
+    {noreply, State};
+
 handle_info(Info, State) ->
-    io:fwrite("lwm2m_coap_udp_socket unexpected ~p~n", [Info]),
+    error_logger:error_msg("lwm2m_coap_udp_socket unexpected: ~p", [Info]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 terminate(_Reason, #state{sock=Sock}) ->
+    error_logger:error_msg("coap socket stopped, error: ~p", [_Reason]),
     gen_udp:close(Sock),
     ok.
 

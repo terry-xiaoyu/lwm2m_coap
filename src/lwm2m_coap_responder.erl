@@ -22,7 +22,6 @@
 -record(state, {channel, prefix, module, args, insegs, last_response, observer, obseq, lwm2m_state, timer}).
 
 -define(EXCHANGE_LIFETIME, 247000).
--define(STOP_TIMEOUT, 3000).
 
 start_link(Channel, Uri) ->
     gen_server:start_link(?MODULE, [Channel, Uri], []).
@@ -30,7 +29,7 @@ start_link(Channel, Uri) ->
 stop(Reason) ->
     stop(self(), Reason).
 stop(Pid, Reason) ->
-    gen_server:stop(Pid, Reason, ?STOP_TIMEOUT).
+    gen_server:cast(Pid, {stop, Reason}).
 
 notify(Uri, Resource) ->
     case pg2:get_members({coap_observer, Uri}) of
@@ -52,14 +51,28 @@ init([Channel, Uri]) ->
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State, hibernate}.
 
-handle_cast(_Resource, State=#state{observer=undefined}) ->
-    % ignore unexpected notification
-    {noreply, State, hibernate};
+handle_cast({stop, Reason}, State=#state{observer=Observer}) ->
+    NewState =
+        case Observer of
+            undefined ->
+                State;
+            Observer ->
+                {ok, State2} = cancel_observer(Observer, State),
+                State2
+        end,
+    {stop, {shutdown, Reason}, NewState};
 handle_cast(Resource=#coap_content{}, State=#state{observer=Observer}) ->
-    return_resource(Observer, Resource, State);
+    case Observer of
+        undefined ->
+            {noreply, State, hibernate};
+        Observer ->
+            return_resource(Observer, Resource, State)
+    end;
 handle_cast({error, Code}, State=#state{observer=Observer}) ->
     {ok, State2} = cancel_observer(Observer, State),
-    return_response(Observer, {error, Code}, State2).
+    return_response(Observer, {error, Code}, State2);
+handle_cast(_Resource, State) ->
+    {noreply, State, hibernate}.
 
 handle_info({coap_request, ChId, _Channel, undefined, Request}, State) ->
     %io:fwrite("-> ~p~n", [Request]),

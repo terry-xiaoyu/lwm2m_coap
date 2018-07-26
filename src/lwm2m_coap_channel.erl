@@ -19,7 +19,7 @@
 -define(VERSION, 1).
 -define(MAX_MESSAGE_ID, 65535). % 16-bit number
 
--record(state, {sock, cid, tokens, trans, nextmid, res = undefined, rescnt}).
+-record(state, {sock, cid, tokens, msgid_token, trans, nextmid, res = undefined, rescnt}).
 
 -include("coap.hrl").
 
@@ -55,6 +55,7 @@ init([SockPid, ChId]) ->
     Time = 80000 + rand:uniform(10000),
     erlang:send_after(Time, self(), {ping, ?PING, Time}),
     {ok, #state{sock=SockPid, cid=ChId, tokens=dict:new(),
+        msgid_token=dict:new(),
         trans=dict:new(), nextmid=first_mid(), rescnt=0}}.
 
 handle_call(_Unknown, _From, State) ->
@@ -75,10 +76,13 @@ handle_cast(Request, State) ->
     io:fwrite("coap_channel unknown cast ~p~n", [Request]),
     {noreply, State, hibernate}.
 
-transport_new_request(Message, Receiver, State=#state{tokens=Tokens}) ->
+transport_new_request(Message = #coap_message{}, Receiver,
+        State=#state{tokens=Tokens, msgid_token=MsgidToToken, nextmid=MsgId}) ->
     Token = crypto:strong_rand_bytes(4), % shall be at least 32 random bits
-    Tokens2 = dict:store(Token, {0, Receiver}, Tokens),
-    transport_new_message(Message#coap_message{token=Token}, Receiver, State#state{tokens=Tokens2}).
+    Tokens2 = dict:store(Token, {sent, Receiver}, Tokens),
+    MsgidToToken2 = dict:store(MsgId, Token, MsgidToToken),
+    transport_new_message(Message#coap_message{token=Token}, Receiver,
+        State#state{tokens=Tokens2, msgid_token=MsgidToToken2}).
 
 transport_new_message(Message, Receiver, State=#state{nextmid=MsgId}) ->
     transport_message({out, MsgId}, Message#coap_message{id=MsgId}, Receiver, State#state{nextmid=next_mid(MsgId)}).
@@ -133,7 +137,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
             update_state(State, TrId, lwm2m_coap_transport:received(BinMessage, TrState));
         error ->
             case dict:find(Token, Tokens) of
-                {ok, {1, Receiver}} ->
+                {ok, {acked, Receiver}} ->
                     update_state(State, TrId,
                         lwm2m_coap_transport:received(BinMessage, init_transport(TrId, Receiver, State)));
                 Error ->
@@ -143,12 +147,30 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
             end
     end;
 
+% incoming empty ACK(2) or RST(3)
+handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, 0:4, _Code:8, MsgId:16>>},
+        State=#state{sock=Sock, cid=ChId, trans=Trans, tokens=Tokens, msgid_token=MsgidToToken}) ->
+    case dict:find(MsgId, MsgidToToken) of
+        error ->
+            send_reset(Sock, ChId, MsgId, msgid_not_found),
+            {noreply, State, hibernate};
+        {ok, Token} ->
+            {_, Receiver} = dict:fetch(Token, Tokens),
+            Tokens2 = dict:store(Token, {acked, Receiver}, Tokens),
+            TrId = {out, MsgId},
+            update_state(State#state{tokens = Tokens2}, TrId,
+                case dict:find(TrId, Trans) of
+                    error -> undefined; % ignore unexpected responses
+                    {ok, TrState} -> lwm2m_coap_transport:received(BinMessage, TrState)
+                end)
+    end;
+
 % incoming ACK(2) or RST(3) to a request or response
-handle_info({datagram, BinMessage= <<?VERSION:2, _:2, TKL:4, _Code:8, MsgId:16, Token:TKL/bytes, _/bytes>>},
-        State=#state{trans=Trans, tokens = Tokens}) ->
+handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, TKL:4, _Code:8, MsgId:16, Token:TKL/bytes, _/bytes>>},
+        State=#state{sock=Sock, cid=ChId, trans=Trans, tokens=Tokens}) ->
     TrId = {out, MsgId},
     Tokens2 = case dict:find(Token, Tokens) of
-        {ok, {_, Receiver}} -> dict:store(Token, {1, Receiver}, Tokens);
+        {ok, {_, Receiver}} -> dict:store(Token, {acked, Receiver}, Tokens);
         _ -> Tokens
     end,
     update_state(State#state{tokens = Tokens2}, TrId,
@@ -165,9 +187,11 @@ handle_info({timeout, TrId, Event}, State=#state{trans=Trans}) ->
             error -> undefined; % ignore unexpected responses
             {ok, TrState} -> lwm2m_coap_transport:timeout(Event, TrState)
         end);
-handle_info({request_complete, Token}, State=#state{tokens=Tokens}) ->
+handle_info({request_complete, Msg=#coap_message{token=Token, id=Id}},
+        State=#state{tokens=Tokens, msgid_token=MsgidToToken}) ->
     Tokens2 = dict:erase(Token, Tokens),
-    purge_state(State#state{tokens=Tokens2});
+    MsgidToToken2 = dict:erase(Id, MsgidToToken),
+    purge_state(State#state{tokens=Tokens2, msgid_token=MsgidToToken2});
 handle_info({responder_started}, State=#state{rescnt=Count}) ->
     purge_state(State#state{rescnt=Count+1});
 handle_info({responder_completed}, State=#state{rescnt=Count}) ->
@@ -189,11 +213,11 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 terminate(normal, #state{sock=SockPid, cid=ChId}) ->
-    io:fwrite("channel ~p finished ~p~n", [ChId, normal]),
+    error_logger:info_msg("channel ~p finished, reason: ~p", [ChId, normal]),
     SockPid ! {terminated, ChId},
     ok;
 terminate(Reason, #state{sock=SockPid, cid=ChId}) ->
-    io:fwrite("channel ~p finished ~p~n", [ChId, Reason]),
+    error_logger:info_msg("channel ~p finished, reason: ~p", [ChId, Reason]),
     SockPid ! {terminated, ChId},
     ok.
 
