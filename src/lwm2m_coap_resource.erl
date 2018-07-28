@@ -53,7 +53,7 @@
     {'error', coap_code(), lwm2m_state()}.
 
 % response to notifications
--callback coap_ack(any(), any()) ->
+-callback coap_ack(coap_channel_id(), any(), any()) ->
     {'ok', any()}.
 
 -type coap_channel_id() :: {inet:port_number(), inet:ip_address()}.

@@ -19,7 +19,7 @@
 -define(VERSION, 1).
 -define(MAX_MESSAGE_ID, 65535). % 16-bit number
 
--record(state, {sock, cid, tokens, msgid_token, trans, nextmid, res = undefined, rescnt}).
+-record(state, {sock, chid, tokens, msgid_token, trans, nextmid, responder}).
 
 -include("coap.hrl").
 
@@ -54,9 +54,9 @@ init([SockPid, ChId]) ->
     _ = rand:seed(exs1024),
     Time = 80000 + rand:uniform(10000),
     erlang:send_after(Time, self(), {ping, ?PING, Time}),
-    {ok, #state{sock=SockPid, cid=ChId, tokens=dict:new(),
+    {ok, #state{sock=SockPid, chid=ChId, tokens=dict:new(),
         msgid_token=dict:new(),
-        trans=dict:new(), nextmid=first_mid(), rescnt=0}}.
+        trans=dict:new(), nextmid=first_mid()}}.
 
 handle_call(_Unknown, _From, State) ->
     {reply, unknown_call, State, hibernate}.
@@ -106,14 +106,14 @@ transport_response(Message=#coap_message{id=MsgId}, Receiver, State=#state{trans
     end.
 
 % incoming CON(0) or NON(1) request
-handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State = #state{sock=Sock, cid=ChId, res = undefined}) ->
+handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDetail:5, MsgId:16, _/bytes>>}, State = #state{sock=Sock, chid=ChId, responder = undefined}) ->
     case catch lwm2m_coap_message_parser:decode(BinMessage) of
         #coap_message{options=Options} ->
             Uri = proplists:get_value(uri_path, Options, []),
             case lwm2m_coap_responder:start_link(self(), Uri) of
                 {ok, Re} ->
                     TrId = {in, MsgId},
-                    State2 = State#state{res = Re},
+                    State2 = State#state{responder = Re},
                     update_state(State2, TrId,
                         lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State2)));
                 {error, Error} ->
@@ -130,7 +130,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, _TKL:4, 0:3, _CodeDet
         lwm2m_coap_transport:received(BinMessage, create_transport(TrId, undefined, State)));
 % incoming CON(0) or NON(1) response
 handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId:16, Token:TKL/bytes, _/bytes>>},
-        State=#state{sock=Sock, cid=ChId, tokens=Tokens, trans=Trans}) ->
+        State=#state{sock=Sock, chid=ChId, tokens=Tokens, trans=Trans}) ->
     TrId = {in, MsgId},
     case dict:find(TrId, Trans) of
         {ok, TrState} ->
@@ -149,7 +149,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
 
 % incoming empty ACK(2) or RST(3)
 handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, 0:4, _Code:8, MsgId:16>>},
-        State=#state{sock=Sock, cid=ChId, trans=Trans, tokens=Tokens, msgid_token=MsgidToToken}) ->
+        State=#state{sock=Sock, chid=ChId, trans=Trans, tokens=Tokens, msgid_token=MsgidToToken}) ->
     case dict:find(MsgId, MsgidToToken) of
         error ->
             send_reset(Sock, ChId, MsgId, msgid_not_found),
@@ -165,19 +165,25 @@ handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, 0:4, _Code:8, MsgId:16>>}
                 end)
     end;
 
-% incoming ACK(2) or RST(3) to a request or response
+% incoming piggybacked ACK(2) to a request or response
 handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, TKL:4, _Code:8, MsgId:16, Token:TKL/bytes, _/bytes>>},
-        State=#state{sock=Sock, cid=ChId, trans=Trans, tokens=Tokens}) ->
+        State=#state{sock=Sock, chid=ChId, trans=Trans, tokens=Tokens}) ->
     TrId = {out, MsgId},
-    Tokens2 = case dict:find(Token, Tokens) of
-        {ok, {_, Receiver}} -> dict:store(Token, {acked, Receiver}, Tokens);
-        _ -> Tokens
-    end,
-    update_state(State#state{tokens = Tokens2}, TrId,
-        case dict:find(TrId, Trans) of
-            error -> undefined; % ignore unexpected responses
-            {ok, TrState} -> lwm2m_coap_transport:received(BinMessage, TrState)
-        end);
+    case dict:find(Token, Tokens) of
+        {ok, {sent, Receiver}} ->
+            Tokens2 = dict:store(Token, {acked, Receiver}, Tokens),
+            update_state(State#state{tokens = Tokens2}, TrId,
+                case dict:find(TrId, Trans) of
+                    error -> undefined; % ignore unexpected responses
+                    {ok, TrState} -> lwm2m_coap_transport:received(BinMessage, TrState)
+                end);
+        {ok, {acked, _Receiver}} ->
+            {noreply, State, hibernate};
+        _Error ->
+            send_reset(Sock, ChId, MsgId, {msgid_not_found, _Error}),
+            {noreply, State, hibernate}
+    end;
+
 % silently ignore other versions
 handle_info({datagram, <<Ver:2, _/bytes>>}, State) when Ver /= ?VERSION ->
     {noreply, State, hibernate};
@@ -187,20 +193,20 @@ handle_info({timeout, TrId, Event}, State=#state{trans=Trans}) ->
             error -> undefined; % ignore unexpected responses
             {ok, TrState} -> lwm2m_coap_transport:timeout(Event, TrState)
         end);
-handle_info({request_complete, Msg=#coap_message{token=Token, id=Id}},
+handle_info({request_complete, #coap_message{token=Token, id=Id}},
         State=#state{tokens=Tokens, msgid_token=MsgidToToken}) ->
     Tokens2 = dict:erase(Token, Tokens),
     MsgidToToken2 = dict:erase(Id, MsgidToToken),
-    purge_state(State#state{tokens=Tokens2, msgid_token=MsgidToToken2});
-handle_info({responder_started}, State=#state{rescnt=Count}) ->
-    purge_state(State#state{rescnt=Count+1});
-handle_info({responder_completed}, State=#state{rescnt=Count}) ->
-    purge_state(State#state{rescnt=Count-1});
+    {noreply, State#state{tokens=Tokens2, msgid_token=MsgidToToken2}, hibernate};
 
-handle_info({'EXIT', _Pid, Reason}, State) ->
+handle_info({'EXIT', Resp, Reason}, State = #state{responder = Resp}) ->
+    error_logger:info_msg("channel received exit from responder: ~p, reason: ~p", [Resp, Reason]),
     {stop, Reason, State};
+handle_info({'EXIT', _Pid, _Reason}, State = #state{}) ->
+    error_logger:error_msg("channel received exit from stranger: ~p, reason: ~p", [_Pid, _Reason]),
+    {noreply, State, hibernate};
 
-handle_info({ping, Data, Time}, State = #state{sock=SockPid, cid=ChId}) ->
+handle_info({ping, Data, Time}, State = #state{sock=SockPid, chid=ChId}) ->
     erlang:send_after(Time, self(), {ping, ?PING, Time}),
     SockPid ! {ping, ChId, Data},
     {noreply, State, hibernate};
@@ -212,11 +218,11 @@ handle_info(Info, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(normal, #state{sock=SockPid, cid=ChId}) ->
+terminate(normal, #state{sock=SockPid, chid=ChId}) ->
     error_logger:info_msg("channel ~p finished, reason: ~p", [ChId, normal]),
     SockPid ! {terminated, ChId},
     ok;
-terminate(Reason, #state{sock=SockPid, cid=ChId}) ->
+terminate(Reason, #state{sock=SockPid, chid=ChId}) ->
     error_logger:info_msg("channel ~p finished, reason: ~p", [ChId, Reason]),
     SockPid ! {terminated, ChId},
     ok.
@@ -242,22 +248,13 @@ create_transport(TrId, Receiver, State=#state{trans=Trans}) ->
         error -> init_transport(TrId, Receiver, State)
     end.
 
-init_transport(TrId, undefined, #state{sock=Sock, cid=ChId, res=ReSup}) ->
+init_transport(TrId, undefined, #state{sock=Sock, chid=ChId, responder=ReSup}) ->
     lwm2m_coap_transport:init(Sock, ChId, self(), TrId, ReSup, undefined);
-init_transport(TrId, Receiver, #state{sock=Sock, cid=ChId}) ->
+init_transport(TrId, Receiver, #state{sock=Sock, chid=ChId}) ->
     lwm2m_coap_transport:init(Sock, ChId, self(), TrId, undefined, Receiver).
 
-update_state(State=#state{trans=Trans}, TrId, undefined) ->
-    Trans2 = dict:erase(TrId, Trans),
-    purge_state(State#state{trans=Trans2});
+update_state(State=#state{trans=Trans}, _TrId, undefined) ->
+    {noreply, State#state{trans=Trans}, hibernate};
 update_state(State=#state{trans=Trans}, TrId, TrState) ->
     Trans2 = dict:store(TrId, TrState, Trans),
     {noreply, State#state{trans=Trans2}, hibernate}.
-
-purge_state(State=#state{tokens=Tokens, trans=Trans, rescnt=Count}) ->
-    case dict:size(Tokens)+dict:size(Trans)+Count of
-        0 -> {stop, normal, State};
-        _Else -> {noreply, State, hibernate}
-    end.
-
-% end of file
