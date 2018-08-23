@@ -153,6 +153,9 @@ get_content_value(accept, Content) -> Content#coap_content.accept;
 get_content_value(proxy_uri, Content) -> Content#coap_content.proxy_uri;
 get_content_value(proxy_scheme, Content) -> Content#coap_content.proxy_scheme;
 get_content_value(size1, Content) -> Content#coap_content.size1;
+get_content_value(observe, Content) -> Content#coap_content.observe;
+get_content_value(block1, Content) -> Content#coap_content.block1;
+get_content_value(block2, Content) -> Content#coap_content.block2;
 get_content_value(payload, Content) -> Content#coap_content.payload.
 
 % end of file

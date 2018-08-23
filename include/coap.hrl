@@ -22,6 +22,9 @@
     proxy_uri,
     proxy_scheme,
     size1,
+    observe,
+    block1,
+    block2,
     % payload
     payload = <<>>
     }).
