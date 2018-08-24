@@ -166,8 +166,8 @@ process_request(ChId, Request, State) ->
 check_resource(ChId, Request, State=#state{prefix=Prefix, module=Module, lwm2m_state=Lwm2mState}) ->
     Content = lwm2m_coap_message:get_content(Request),
     case invoke_callback(Module, coap_get, [ChId, Prefix, uri_query(Request), Content], Lwm2mState) of
-        {ok, #coap_content{}, Lwm2mState2} ->
-            check_preconditions(ChId, Request, #coap_content{}, State#state{lwm2m_state=Lwm2mState2});
+        {ok, Response = #coap_content{}, Lwm2mState2} ->
+            check_preconditions(ChId, Request, Response, State#state{lwm2m_state=Lwm2mState2});
         {error, not_found, Lwm2mState2} ->
             check_preconditions(ChId, Request, {error, not_found}, State#state{lwm2m_state=Lwm2mState2});
         {error, Code, Lwm2mState2} ->
@@ -334,8 +334,9 @@ return_resource(Ref, Request=#coap_message{options=Options}, {ok, Code}, Content
                 lwm2m_coap_message:set_content(#coap_content{etag=ETag},
                     lwm2m_coap_message:response({ok, valid}, Request));
             false ->
-                lwm2m_coap_message:set_content(Content, proplists:get_value(block2, Options),
-                    lwm2m_coap_message:response({ok, Code}, Request))
+                lwm2m_coap_message:set_content(Content,
+                    proplists:get_value(block2, Options),
+                        lwm2m_coap_message:response({ok, Code}, Request))
         end, State#state{last_response={ok, Code, Content}}).
 
 return_response(Request, Code, State) ->
