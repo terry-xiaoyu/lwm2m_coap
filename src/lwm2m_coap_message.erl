@@ -112,7 +112,7 @@ set_content(#coap_content{payload=Payload} = Content, undefined, Msg) ->
     PayloadSize = iolist_size(Payload),
     if
         PayloadSize =< ?MAX_BLOCK_SIZE -> %% segmentation not required
-            set_opts_from_content(Msg, Content);
+            set_opts_from_content(Msg, Content, [payload]);
         true -> % payload too large, segmentation required (late negotiation)
             set_content(Content, {0, true, ?MAX_BLOCK_SIZE}, Msg)
     end;
