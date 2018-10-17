@@ -140,6 +140,8 @@ handle_info({datagram, BinMessage= <<?VERSION:2, 0:1, _:1, TKL:4, _Code:8, MsgId
                 {ok, {acked, Receiver}} ->
                     update_state(State, TrId,
                         lwm2m_coap_transport:received(BinMessage, init_transport(TrId, Receiver, State)));
+                {ok, _} -> %% drop this message if ack has not received
+                    {noreply, State, hibernate};
                 Error ->
                     % token was not recognized
                     send_reset(Sock, ChId, MsgId, {token_not_found, Error}),
