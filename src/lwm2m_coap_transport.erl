@@ -135,13 +135,15 @@ await_aack({in, _BinMessage}, State) ->
     % ignore request retransmission
     next_state(await_aack, State);
 await_aack({timeout, await_aack}, State=#state{sock=Sock, cid=ChId, msg=BinAck}) ->
-    %io:fwrite("~p <- ack [application didn't respond]~n", [self()]),
+    error_logger:warning_msg("~p <- empty ack ~p [application didn't respond]~n", [self(),BinAck]),
     Sock ! {datagram, ChId, BinAck},
     next_state(pack_sent, State);
 await_aack({out, Ack}, State) ->
     % set correct type for a piggybacked response
     Ack2 = case Ack of
-        #coap_message{type=con} -> Ack#coap_message{type=ack};
+        #coap_message{type=T} when T =:= con;
+                                   T =:= non
+             -> Ack#coap_message{type=ack};
         Else -> Else
     end,
     go_pack_sent(Ack2, State).
