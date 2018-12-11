@@ -154,7 +154,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, 0:4, _Code:8, MsgId:16>>}
         State=#state{sock=Sock, chid=ChId, trans=Trans, tokens=Tokens, msgid_token=MsgidToToken}) ->
     case dict:find(MsgId, MsgidToToken) of
         error ->
-            send_reset(Sock, ChId, MsgId, msgid_not_found),
+            % send_reset(Sock, ChId, MsgId, msgid_not_found),
             {noreply, State, hibernate};
         {ok, Token} ->
             {_, Receiver} = dict:fetch(Token, Tokens),
@@ -182,7 +182,7 @@ handle_info({datagram, BinMessage= <<?VERSION:2, _T:2, TKL:4, _Code:8, MsgId:16,
         {ok, {acked, _Receiver}} ->
             {noreply, State, hibernate};
         _Error ->
-            send_reset(Sock, ChId, MsgId, {msgid_not_found, _Error}),
+            % send_reset(Sock, ChId, MsgId, {msgid_not_found, _Error}),
             {noreply, State, hibernate}
     end;
 

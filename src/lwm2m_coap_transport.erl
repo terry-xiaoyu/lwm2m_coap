@@ -230,7 +230,7 @@ handle_ack(_Message, #state{cid=ChId, channel=Channel, receiver={Sender, Ref}}) 
 request_complete(Channel, Msg=#coap_message{options=Options}) ->
     case proplists:get_value(observe, Options, []) of
         [] ->
-            erlang:send_after(100, Channel, {request_complete, Msg}),
+            Channel ! {request_complete, Msg},
             ok;
         _Else ->
             ok
