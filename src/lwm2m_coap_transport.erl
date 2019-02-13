@@ -16,7 +16,7 @@
 
 -define(ACK_TIMEOUT, 2000).
 -define(ACK_RANDOM_FACTOR, 1000). % ACK_TIMEOUT*0.5
--define(MAX_RETRANSMIT, 3).
+-define(MAX_RETRANSMIT, 4).
 
 -define(PROCESSING_DELAY, 1000). % standard allows 2000
 -define(EXCHANGE_LIFETIME, 247000).
@@ -192,7 +192,7 @@ await_pack({in, BinAck}, State) ->
     next_state(aack_sent, State);
 await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, sock=Sock, cid=ChId, msg=Message, retry_time=Timeout, retry_count=Count}) ->
     MaxRetransmit = lwm2m_coap_channel:get_coap_transmit_opts(coap_max_retransmit, ?MAX_RETRANSMIT),
-    if Count =< MaxRetransmit ->
+    if Count < MaxRetransmit ->
         BinMessage = lwm2m_coap_message_parser:encode(Message),
         Sock ! {datagram, ChId, BinMessage},
         Timeout2 = Timeout*2,
