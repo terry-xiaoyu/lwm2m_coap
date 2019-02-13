@@ -16,7 +16,7 @@
 
 -define(ACK_TIMEOUT, 2000).
 -define(ACK_RANDOM_FACTOR, 1000). % ACK_TIMEOUT*0.5
--define(MAX_RETRANSMIT, 4).
+-define(MAX_RETRANSMIT, 3).
 
 -define(PROCESSING_DELAY, 1000). % standard allows 2000
 -define(EXCHANGE_LIFETIME, 247000).
@@ -170,7 +170,8 @@ out_con({out, Message}, State=#state{sock=Sock, cid=ChId}) ->
     BinMessage = lwm2m_coap_message_parser:encode(Message),
     Sock ! {datagram, ChId, BinMessage},
     _ = rand:seed(exs1024),
-    Timeout = ?ACK_TIMEOUT+rand:uniform(?ACK_RANDOM_FACTOR),
+    Timeout = lwm2m_coap_channel:get_coap_transmit_opts(coap_ack_timeout, ?ACK_TIMEOUT)
+              + rand:uniform(?ACK_RANDOM_FACTOR),
     next_state(await_pack, State#state{msg=Message, retry_time=Timeout, retry_count=0}, Timeout).
 
 % peer ack
@@ -189,14 +190,17 @@ await_pack({in, BinAck}, State) ->
             ok
     end,
     next_state(aack_sent, State);
-await_pack({timeout, await_pack}, State=#state{sock=Sock, cid=ChId, msg=Message, retry_time=Timeout, retry_count=Count}) when Count < ?MAX_RETRANSMIT ->
-    BinMessage = lwm2m_coap_message_parser:encode(Message),
-    Sock ! {datagram, ChId, BinMessage},
-    Timeout2 = Timeout*2,
-    next_state(await_pack, State#state{retry_time=Timeout2, retry_count=Count+1}, Timeout2);
-await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, msg=Message}) ->
-    handle_error(Message, timeout, State),
-    next_state(aack_sent, State).
+await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, sock=Sock, cid=ChId, msg=Message, retry_time=Timeout, retry_count=Count}) ->
+    MaxRetransmit = lwm2m_coap_channel:get_coap_transmit_opts(coap_max_retransmit, ?MAX_RETRANSMIT),
+    if Count =< MaxRetransmit ->
+        BinMessage = lwm2m_coap_message_parser:encode(Message),
+        Sock ! {datagram, ChId, BinMessage},
+        Timeout2 = Timeout*2,
+        next_state(await_pack, State#state{retry_time=Timeout2, retry_count=Count+1}, Timeout2);
+    true ->
+        handle_error(Message, timeout, State),
+        next_state(aack_sent, State)
+    end.
 
 aack_sent(_Msg, State) ->
     % ignore ack retransmission

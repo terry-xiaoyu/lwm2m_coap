@@ -15,6 +15,7 @@
 -export([start_link/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3, terminate/2]).
 -export([ping/1, send/2, send_request/3, send_message/3, send_response/3, close/1]).
+-export([get_coap_transmit_opts/2, set_coap_transmit_opts/2]).
 
 -define(VERSION, 1).
 -define(MAX_MESSAGE_ID, 65535). % 16-bit number
@@ -44,6 +45,13 @@ send_message(Channel, Ref, Message) ->
 send_response(Channel, Ref, Message) ->
     gen_server:cast(Channel, {send_response, Message, {self(), Ref}}),
     {ok, Ref}.
+set_coap_transmit_opts(Channel, CoapTransOpts = #{}) ->
+    gen_server:cast(Channel, {set_coap_transmit_opts, CoapTransOpts}).
+get_coap_transmit_opts(Key, Default) ->
+    case erlang:get(coap_transmit_opts) of
+        undefined -> undefined;
+        CoapTransOpts -> maps:get(Key, CoapTransOpts, Default)
+    end.
 
 close(Pid) ->
     gen_server:cast(Pid, shutdown).
@@ -70,6 +78,9 @@ handle_cast({send_message, Message, Receiver}, State) ->
 % outgoing response, either CON(0) or NON(1), piggybacked ACK(2) or RST(3)
 handle_cast({send_response, Message, Receiver}, State) ->
     transport_response(Message, Receiver, State);
+handle_cast({set_coap_transmit_opts, CoapTransOpts}, State) ->
+    erlang:put(coap_transmit_opts, CoapTransOpts),
+    {noreply, State};
 handle_cast(shutdown, State) ->
     {stop, normal, State};
 handle_cast(Request, State) ->

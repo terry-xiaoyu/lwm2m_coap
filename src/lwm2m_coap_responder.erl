@@ -263,10 +263,13 @@ cancel_observer(#coap_message{options=Options}, State=#state{module=Module, lwm2
     end,
     {ok, State#state{observer=undefined, lwm2m_state=Lwm2mState2}}.
 
-handle_post(ChId, Request, State=#state{prefix=Prefix, module=Module, lwm2m_state=Lwm2mState, args=Args}) ->
+handle_post(ChId, Request, State=#state{channel = Channel, prefix=Prefix, module=Module, lwm2m_state=Lwm2mState, args=Args}) ->
     Content = lwm2m_coap_message:get_content(Request),
     case invoke_callback(Module, coap_post, [ChId, Prefix, uri_query(Request), Content], Lwm2mState, Args) of
         {ok, Code, Content2, Lwm2mState2} ->
+            return_resource([], Request#coap_message{type=non}, {ok, Code}, Content2, State#state{lwm2m_state=Lwm2mState2});
+        {ok, Code, Content2, Lwm2mState2, CoapTransOpts} ->
+            lwm2m_coap_channel:set_coap_transmit_opts(Channel, CoapTransOpts),
             return_resource([], Request#coap_message{type=non}, {ok, Code}, Content2, State#state{lwm2m_state=Lwm2mState2});
         {error, Error, Lwm2mState2} ->
             return_response(Request, {error, Error}, State#state{lwm2m_state=Lwm2mState2});
