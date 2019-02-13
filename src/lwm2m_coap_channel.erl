@@ -49,8 +49,12 @@ set_coap_transmit_opts(Channel, CoapTransOpts = #{}) ->
     gen_server:cast(Channel, {set_coap_transmit_opts, CoapTransOpts}).
 get_coap_transmit_opts(Key, Default) ->
     case erlang:get(coap_transmit_opts) of
-        undefined -> undefined;
-        CoapTransOpts -> maps:get(Key, CoapTransOpts, Default)
+        undefined -> Default;
+        CoapTransOpts ->
+            case maps:get(Key, CoapTransOpts, Default) of
+                undefined -> Default;
+                Value -> Value
+            end
     end.
 
 close(Pid) ->
