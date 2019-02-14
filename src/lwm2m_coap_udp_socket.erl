@@ -26,6 +26,9 @@
 
 -include("coap.hrl").
 
+-define(CHID(LocalIP0, LocalPort0, PeerIP0, PeerPort0),
+            {LocalIP0, LocalPort0, PeerIP0, PeerPort0}).
+
 % client
 start_link() ->
     gen_server:start_link(?MODULE, [0], []).
@@ -33,8 +36,8 @@ start_link() ->
 start_link(InPort, SupPid, Options) ->
     gen_server:start_link(?MODULE, [InPort, SupPid, Options], []).
 
-get_channel(Pid, {PeerIP, PeerPortNo}) ->
-    gen_server:call(Pid, {get_channel, {PeerIP, PeerPortNo}}).
+get_channel(Pid, ChId) ->
+    gen_server:call(Pid, {get_channel, ChId}).
 
 close(Pid) ->
     % the channels will be terminated by their supervisor (server), or
@@ -89,19 +92,20 @@ handle_cast(Request, State) ->
     error_logger:error_msg("lwm2m_coap_udp_socket unknown cast: ~p", [Request]),
     {noreply, State}.
 
-handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = undefined}) ->
-    ChId = {PeerIP, PeerPortNo},
+handle_info({udp, Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = undefined}) ->
+    {ok, {LocalIP, LocalPort}} = inet:sockname(Socket),
     %io:format("Got normal udp data, Peer: ~p, data: ~p~n", [ChId, Data]),
-    goto_channel(ChId, Chans, Data, PoolPid, State);
+    goto_channel(?CHID(LocalIP, LocalPort, PeerIP, PeerPortNo), Chans, Data, PoolPid, State);
 
-handle_info({udp, _Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = v1}) ->
+handle_info({udp, Socket, PeerIP, PeerPortNo, Data}, State=#state{chans=Chans, pool=PoolPid, proxy_protocol = v1}) ->
     %io:format("Got proxy protocol udp data, Peer: ~p, data: ~p~n", [{PeerIP, PeerPortNo}, Data]),
     case parse_v1(Data) of
         {error, invalid_header} ->
             {noreply, State}; % drop
         {ok, {_ProxyHeader = #proxy_header{src_addr= SrcAddr, src_port = SrcPort}, Body}} ->
             %io:format("Proxy Protocol Header: ~p~n", [_ProxyHeader]),
-            ChId = {SrcAddr, SrcPort},
+            {ok, {LocalIP, LocalPort}} = inet:sockname(Socket),
+            ChId = ?CHID(LocalIP, LocalPort, SrcAddr, SrcPort),
             cache_proxy_addr(ChId, {PeerIP, PeerPortNo}),
             goto_channel(ChId, Chans, Body, PoolPid, State)
     end;
@@ -235,5 +239,5 @@ delete_proxy_addr(ChId) ->
     end.
 
 get_addr(v1, ChId) -> get_proxy_addr(ChId);
-get_addr(_, {PeerIP, PeerPortNo}) -> {PeerIP, PeerPortNo}.
+get_addr(_, {_LocalIP, _LocalPort, PeerIP, PeerPortNo}) -> {PeerIP, PeerPortNo}.
 % end of file
