@@ -92,6 +92,13 @@ handle_info({coap_ack, ChId, _Channel, Ref},
             {noreply, State#state{lwm2m_state=Lwm2mState2}, hibernate}
     end;
 
+handle_info({coap_timeout, ChId, _Channel, Ref},
+        State=#state{module=Module, lwm2m_state=Lwm2mState, args=Args}) ->
+    case invoke_callback(Module, coap_timeout, [ChId, Ref], Lwm2mState, Args) of
+        {ok, Lwm2mState2} ->
+            {noreply, State#state{lwm2m_state=Lwm2mState2}, hibernate}
+    end;
+
 handle_info({coap_response, ChId, _Channel, Ref, #coap_message{
                 type = Type, method = Method, payload = Payload, options = Opts
              }}, State=#state{

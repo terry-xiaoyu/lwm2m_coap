@@ -170,7 +170,7 @@ out_con({out, Message}, State=#state{sock=Sock, cid=ChId}) ->
     BinMessage = lwm2m_coap_message_parser:encode(Message),
     Sock ! {datagram, ChId, BinMessage},
     _ = rand:seed(exs1024),
-    Timeout = lwm2m_coap_channel:get_coap_transmit_opts(coap_ack_timeout, ?ACK_TIMEOUT)
+    Timeout = erlang:trunc(lwm2m_coap_channel:get_coap_transmit_opts(coap_ack_timeout, ?ACK_TIMEOUT))
               + rand:uniform(?ACK_RANDOM_FACTOR),
     next_state(await_pack, State#state{msg=Message, retry_time=Timeout, retry_count=0}, Timeout).
 
@@ -190,7 +190,7 @@ await_pack({in, BinAck}, State) ->
             ok
     end,
     next_state(aack_sent, State);
-await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, sock=Sock, cid=ChId, msg=Message, retry_time=Timeout, retry_count=Count}) ->
+await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, sock=Sock, cid=ChId, msg=Message, retry_time=Timeout, retry_count=Count, channel=Channel, receiver={Sender, Ref}}) ->
     MaxRetransmit = lwm2m_coap_channel:get_coap_transmit_opts(coap_max_retransmit, ?MAX_RETRANSMIT),
     if Count < MaxRetransmit ->
         BinMessage = lwm2m_coap_message_parser:encode(Message),
@@ -198,6 +198,7 @@ await_pack({timeout, await_pack}, State=#state{tid={out, _MsgId}, sock=Sock, cid
         Timeout2 = Timeout*2,
         next_state(await_pack, State#state{retry_time=Timeout2, retry_count=Count+1}, Timeout2);
     true ->
+        Sender ! {coap_timeout, ChId, Channel, Ref},
         handle_error(Message, timeout, State),
         next_state(aack_sent, State)
     end.
